@@ -1,0 +1,73 @@
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# Node.js
+node_modules/
+*/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build outputs
+dist/
+build/
+frontend/dist/
+frontend/build/
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Database
+*.sqlite
+*.db
+data/
+
+# Uploads & PDFs
+uploads/
+*.pdf
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+*.temp
+.tmp/
+
+# Python environments
+venv/
+ENV/
+env/
+.venv/
+
+# Coverage
+coverage/
+
+# pytest
+.pytest_cache/
+
+# mypy
+.mypy_cache/
