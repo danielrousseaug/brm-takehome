@@ -1,7 +1,10 @@
 import os
+import asyncio
 import uuid
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Response, Form
-from fastapi.responses import FileResponse
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from typing import List
@@ -33,100 +36,122 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Standardized error responses
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request, exc: StarletteHTTPException):
+    if exc.status_code == 404:
+        code = "not_found"
+    elif exc.status_code == 400:
+        code = "bad_request"
+    elif exc.status_code == 401:
+        code = "unauthorized"
+    elif exc.status_code == 403:
+        code = "forbidden"
+    else:
+        code = "http_error"
+    return JSONResponse(
+        content={"error": {"code": code, "message": exc.detail}},
+        status_code=exc.status_code,
+    )
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc: RequestValidationError):
+    return JSONResponse(
+        content={"error": {"code": "validation_error", "message": str(exc)}},
+        status_code=422,
+    )
+
+@app.exception_handler(Exception)
+async def generic_exception_handler(request, exc: Exception):
+    return JSONResponse(
+        content={"error": {"code": "internal", "message": "Internal server error"}},
+        status_code=500,
+    )
+
 @app.post("/test-upload")
 async def test_upload(files: List[UploadFile] = File(...)):
     return {"message": f"Received {len(files)} files", "files": [f.filename for f in files]}
 
+async def _process_single_file(file: UploadFile) -> dict:
+    """Process one uploaded file concurrently: save -> extract -> AI -> persist"""
+    def _write_file_bytes(path: str, data: bytes) -> None:
+        with open(path, "wb") as f:
+            f.write(data)
+    # Generate file path and save
+    file_id = str(uuid.uuid4())
+    file_path = f"uploads/{file_id}_{file.filename}"
+    await asyncio.to_thread(os.makedirs, "uploads", 0o777, True)
+    content = await file.read()
+    await asyncio.to_thread(_write_file_bytes, file_path, content)
+
+    # Use independent DB session per task
+    local_db = SessionLocal()
+    try:
+        # Create pending record
+        contract = models.Contract(
+            file_name=file.filename,
+            pdf_path=file_path,
+            extraction_status="pending"
+        )
+        local_db.add(contract)
+        local_db.commit()
+        local_db.refresh(contract)
+
+        # Extract text (off the event loop)
+        text = await asyncio.to_thread(extract_text_from_pdf, file_path)
+        if not text or not text.strip():
+            contract.extraction_status = "failed"
+            local_db.commit()
+            return {"id": contract.id, "file_name": file.filename, "extraction_status": "failed"}
+
+        # Call AI
+        extracted_data = await extract_contract_data(text)
+        if not extracted_data:
+            contract.extraction_status = "failed"
+            local_db.commit()
+            return {"id": contract.id, "file_name": file.filename, "extraction_status": "failed"}
+
+        # Update fields
+        contract.vendor_name = extracted_data.get("vendor_name")
+        contract.start_date = extracted_data.get("start_date")
+        contract.end_date = extracted_data.get("end_date")
+        contract.renewal_date = extracted_data.get("renewal_date")
+        contract.renewal_term = extracted_data.get("renewal_term")
+        contract.notice_period_days = extracted_data.get("notice_period_days")
+
+        # Display name
+        contract.display_name = generate_smart_display_name(
+            vendor_name=contract.vendor_name,
+            original_filename=file.filename,
+            db=local_db
+        )
+
+        # Compute deadline
+        contract.compute_notice_deadline()
+        contract.extraction_status = "success"
+        contract.extraction_confidence = 1.0
+        local_db.commit()
+
+        return {"id": contract.id, "file_name": file.filename, "extraction_status": "success"}
+    except Exception:
+        try:
+            # Best-effort failure update when we have a contract
+            if 'contract' in locals():
+                contract.extraction_status = "failed"
+                local_db.commit()
+        except Exception:
+            pass
+        return {"id": locals().get('contract').id if 'contract' in locals() else None, "file_name": file.filename, "extraction_status": "failed"}
+    finally:
+        local_db.close()
+
 @app.post("/contracts", response_model=schemas.UploadResponse)
 async def upload_contracts(
     files: List[UploadFile] = File(...),
-    db: Session = Depends(get_db)
 ):
-    print(f"Received {len(files)} files")
-    results = []
-    
-    for file in files:
-        print(f"Processing file: {file.filename}, size: {file.size}, content_type: {file.content_type}")
-        try:
-            # Save uploaded file
-            file_id = str(uuid.uuid4())
-            file_path = f"uploads/{file_id}_{file.filename}"
-            os.makedirs("uploads", exist_ok=True)
-            
-            content = await file.read()
-            with open(file_path, "wb") as f:
-                f.write(content)
-            
-            # Create contract record
-            contract = models.Contract(
-                file_name=file.filename,
-                pdf_path=file_path,
-                extraction_status="pending"
-            )
-            db.add(contract)
-            db.commit()
-            db.refresh(contract)
-            
-            # Extract text and process with AI
-            try:
-                text = extract_text_from_pdf(file_path)
-                if not text.strip():
-                    contract.extraction_status = "failed"
-                    db.commit()
-                    results.append({
-                        "id": contract.id,
-                        "file_name": file.filename,
-                        "extraction_status": "failed"
-                    })
-                    continue
-                
-                # Extract contract data using AI
-                extracted_data = await extract_contract_data(text)
-                
-                # Update contract with extracted data
-                contract.vendor_name = extracted_data.get("vendor_name")
-                contract.start_date = extracted_data.get("start_date")
-                contract.end_date = extracted_data.get("end_date")
-                contract.renewal_date = extracted_data.get("renewal_date")
-                contract.renewal_term = extracted_data.get("renewal_term")
-                contract.notice_period_days = extracted_data.get("notice_period_days")
-                
-                # Generate smart display name
-                contract.display_name = generate_smart_display_name(
-                    vendor_name=contract.vendor_name,
-                    original_filename=file.filename,
-                    db=db
-                )
-                
-                # Compute notice deadline
-                contract.compute_notice_deadline()
-                contract.extraction_status = "success"
-                contract.extraction_confidence = 1.0
-                
-                db.commit()
-                
-                results.append({
-                    "id": contract.id,
-                    "file_name": file.filename,
-                    "extraction_status": "success"
-                })
-                
-            except Exception as e:
-                contract.extraction_status = "failed"
-                db.commit()
-                results.append({
-                    "id": contract.id,
-                    "file_name": file.filename,
-                    "extraction_status": "failed"
-                })
-                
-        except Exception as e:
-            results.append({
-                "id": None,
-                "file_name": file.filename,
-                "extraction_status": "failed"
-            })
-    
+    print(f"Received {len(files)} files for concurrent processing")
+    tasks = [asyncio.create_task(_process_single_file(file)) for file in files]
+    results = await asyncio.gather(*tasks, return_exceptions=False)
     return {"items": results}
 
 @app.get("/contracts", response_model=List[schemas.Contract])
@@ -219,7 +244,7 @@ def export_calendar_ics(db: Session = Depends(get_db)):
 
 @app.get("/contracts/{contract_id}/pdf")
 @app.head("/contracts/{contract_id}/pdf")
-def get_contract_pdf(contract_id: int, db: Session = Depends(get_db)):
+def get_contract_pdf(contract_id: int, download: bool = False, db: Session = Depends(get_db)):
     """Serve the PDF file for a contract"""
     contract = db.query(models.Contract).filter(models.Contract.id == contract_id).first()
     if not contract:
@@ -228,15 +253,19 @@ def get_contract_pdf(contract_id: int, db: Session = Depends(get_db)):
     if not os.path.exists(contract.pdf_path):
         raise HTTPException(status_code=404, detail="PDF file not found")
     
+    # Decide inline vs attachment
+    disposition = "attachment" if download else "inline"
+    filename = f"{contract.display_name or contract.file_name}.pdf"
+    headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, HEAD",
+        "Access-Control-Allow-Headers": "*",
+        "Content-Disposition": f"{disposition}; filename=\"{filename}\"",
+    }
     return FileResponse(
         path=contract.pdf_path,
         media_type="application/pdf",
-        filename=f"{contract.display_name or contract.file_name}.pdf",
-        headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, HEAD",
-            "Access-Control-Allow-Headers": "*",
-        }
+        headers=headers,
     )
 
 if __name__ == "__main__":

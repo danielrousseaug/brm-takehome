@@ -61,6 +61,8 @@ npm install
 npm run dev
 ```
 
+The frontend respects `VITE_API_BASE_URL` (set by Docker Compose). For local non-Docker, it defaults to `http://localhost:8000`.
+
 ## Usage
 
 1. **Upload PDFs**: Go to the Upload page and drag-and-drop PDF files or click to select
@@ -166,7 +168,7 @@ Once running, visit http://localhost:8000/docs for interactive API documentation
 The application has been tested with the provided sample PDFs. To test:
 
 1. Start the application with `docker compose up`
-2. Upload sample PDFs from the `SampleAgreements/` folder
+2. Upload your own sample PDFs (bring your own). If you have a `SampleAgreements/` folder locally, feel free to use it.
 3. Verify extraction results in the Contracts page
 4. Check that events appear correctly in the Calendar page
 5. Edit a contract's renewal date/notice period and confirm the calendar updates

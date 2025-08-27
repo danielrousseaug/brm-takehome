@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { Contract, CalendarEvent, UploadResponse, ContractUpdate } from '../types';
 
-const API_BASE_URL = 'http://localhost:8000';
+const API_BASE_URL = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:8000';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -9,31 +9,14 @@ const api = axios.create({
 
 export const contractsApi = {
   uploadContracts: async (files: File[]): Promise<UploadResponse> => {
-    // Process files one by one to avoid multipart boundary issues
-    const results = [];
-    
-    for (const file of files) {
-      const formData = new FormData();
-      formData.append('files', file);
-      
-      try {
-        const response = await api.post<UploadResponse>('/contracts', formData, {
-          headers: {
-            'Accept': 'application/json',
-          }
-        });
-        results.push(...response.data.items);
-      } catch (error) {
-        console.error(`Failed to upload ${file.name}:`, error);
-        results.push({
-          id: null,
-          file_name: file.name,
-          extraction_status: 'failed'
-        });
+    const formData = new FormData();
+    files.forEach(file => formData.append('files', file));
+    const response = await api.post<UploadResponse>('/contracts', formData, {
+      headers: {
+        'Accept': 'application/json',
       }
-    }
-    
-    return { items: results };
+    });
+    return response.data;
   },
 
   getContracts: async (): Promise<Contract[]> => {
