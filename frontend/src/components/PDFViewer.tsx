@@ -231,6 +231,7 @@ export default function PDFViewer({ contract, pdfUrl, highlightedClauses = [] }:
   }, [highlightConfigs])
 
   // When the OCR-only text layer renders empty (image scan PDFs), fetch OCR text from backend
+  // Fetch OCR text if needed (kept for future use; not called during build)
   const ensureOcrText = useCallback(async () => {
     try {
       if (ocrText !== null) return
