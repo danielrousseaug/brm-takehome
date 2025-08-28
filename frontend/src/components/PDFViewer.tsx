@@ -4,7 +4,7 @@
  * 2) the original canvas-rendered PDF for fidelity.
  * Also provides download/open controls and a simple highlight legend.
  */
-import { useMemo, useRef, useState, useCallback } from 'react'
+import { useMemo, useRef, useState, useCallback, useEffect } from 'react'
 import {
   Box,
   Paper,
@@ -231,7 +231,7 @@ export default function PDFViewer({ contract, pdfUrl, highlightedClauses = [] }:
   }, [highlightConfigs])
 
   // When the OCR-only text layer renders empty (image scan PDFs), fetch OCR text from backend
-  // Fetch OCR text if needed (kept for future use; not called during build)
+  // Fetch OCR text if needed (for image-only PDFs)
   const ensureOcrText = useCallback(async () => {
     try {
       if (ocrText !== null) return
@@ -241,6 +241,11 @@ export default function PDFViewer({ contract, pdfUrl, highlightedClauses = [] }:
       setOcrText('')
     }
   }, [contract.id, ocrText])
+
+  useEffect(() => {
+    // Kick off OCR fetch in the background; harmless if text layer exists
+    void ensureOcrText()
+  }, [ensureOcrText])
 
   return (
     <Box>

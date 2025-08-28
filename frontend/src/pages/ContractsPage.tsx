@@ -228,7 +228,7 @@ export default function ContractsPage() {
     const arr = [...contracts]
     const compare = (a: Contract, b: Contract): number => {
       const dir = order === 'asc' ? 1 : -1
-      const val = (v: any) => (v === undefined || v === null ? '' : v)
+      // removed unused 'val'
       switch (orderBy) {
         case 'name': {
           const an = getName(a)
