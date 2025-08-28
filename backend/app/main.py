@@ -59,9 +59,14 @@ apply_lightweight_migrations()
 
 app = FastAPI(title="BRM Renewal Calendar API", version="1.0.0")
 
+# CORS: allow local dev and optionally production origins via env var
+# Set ALLOWED_ORIGINS to a comma-separated list (e.g., "https://your-frontend.vercel.app, http://localhost:5173").
+_origins_env = os.getenv("ALLOWED_ORIGINS", "")
+_allowed_origins = [o.strip() for o in _origins_env.split(",") if o.strip()] or ["http://localhost:5173", "*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
