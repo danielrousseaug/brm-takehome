@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Box, Typography, Paper, ToggleButton, ToggleButtonGroup, Popover, Button, Stack, CircularProgress, Skeleton, Tooltip, Chip, Grid, Card, CardContent, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Tabs, Tab, Snackbar, Alert, IconButton } from '@mui/material'
 import { Download as DownloadIcon, Event as EventIcon, Upload as UploadIcon, ViewDay, ViewWeek, ViewList, CalendarToday, CalendarViewMonth, Email as EmailIcon, Close as CloseIcon, OpenInNew as OpenInNewIcon } from '@mui/icons-material'
 import FullCalendar from '@fullcalendar/react'
@@ -84,11 +84,7 @@ export default function CalendarPage() {
     return events.filter(event => event.kind === filterKind)
   }
 
-  const handleDownloadICS = () => {
-    // Open export dialog focused on download tab
-    setExportTab('download')
-    setExportOpen(true)
-  }
+  // Removed unused handler to satisfy TS6133 errors
 
   const getEventColor = (kind: string) => {
     switch (kind) {

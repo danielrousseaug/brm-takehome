@@ -4,7 +4,7 @@
  * 2) the original canvas-rendered PDF for fidelity.
  * Also provides download/open controls and a simple highlight legend.
  */
-import React, { useMemo, useRef, useState, useCallback } from 'react'
+import { useMemo, useRef, useState, useCallback } from 'react'
 import {
   Box,
   Paper,
@@ -51,15 +51,7 @@ export default function PDFViewer({ contract, pdfUrl, highlightedClauses = [] }:
     vendor: { fill: 'rgba(156, 39, 176, 0.24)', border: '#9c27b0', chipBg: 'rgba(156, 39, 176, 0.12)', chipBorder: '#9c27b0', text: '#0f1115' },
   }
 
-  const getClauseTypeColor = (type: string) => {
-    switch (type) {
-      case 'date': return 'primary'
-      case 'vendor': return 'secondary'
-      case 'term': return 'warning'
-      case 'notice': return 'error'
-      default: return 'default'
-    }
-  }
+  // (removed unused color mapping helper)
 
   const handleDownload = () => {
     const link = document.createElement('a')

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import {
   Box,
   Typography,
@@ -74,11 +74,11 @@ export default function ContractsPage() {
     setEditForm({
       display_name: contract.display_name || '',
       vendor_name: contract.vendor_name || '',
-      start_date: contract.start_date,
-      end_date: contract.end_date,
-      renewal_date: contract.renewal_date,
+      start_date: contract.start_date || undefined,
+      end_date: contract.end_date || undefined,
+      renewal_date: contract.renewal_date || undefined,
       renewal_term: contract.renewal_term || '',
-      notice_period_days: contract.notice_period_days,
+      notice_period_days: (contract.notice_period_days ?? undefined),
       needs_review: contract.needs_review ?? false,
       extraction_notes: contract.extraction_notes || '',
       uncertain_fields: contract.uncertain_fields || [],
@@ -593,7 +593,7 @@ export default function ContractsPage() {
                 label="Start Date"
                 value={editForm.start_date ? dayjs(editForm.start_date) : null}
                 onChange={(date: Dayjs | null) => 
-                  setEditForm(prev => ({ ...prev, start_date: date?.format('YYYY-MM-DD') || null }))
+                  setEditForm(prev => ({ ...prev, start_date: date ? date.format('YYYY-MM-DD') : undefined }))
                 }
                 slotProps={{ textField: { fullWidth: true } }}
               />
@@ -603,7 +603,7 @@ export default function ContractsPage() {
                 label="End Date"
                 value={editForm.end_date ? dayjs(editForm.end_date) : null}
                 onChange={(date: Dayjs | null) => 
-                  setEditForm(prev => ({ ...prev, end_date: date?.format('YYYY-MM-DD') || null }))
+                  setEditForm(prev => ({ ...prev, end_date: date ? date.format('YYYY-MM-DD') : undefined }))
                 }
                 slotProps={{ textField: { fullWidth: true } }}
               />
@@ -613,7 +613,7 @@ export default function ContractsPage() {
                 label="Renewal Date"
                 value={editForm.renewal_date ? dayjs(editForm.renewal_date) : null}
                 onChange={(date: Dayjs | null) => 
-                  setEditForm(prev => ({ ...prev, renewal_date: date?.format('YYYY-MM-DD') || null }))
+                  setEditForm(prev => ({ ...prev, renewal_date: date ? date.format('YYYY-MM-DD') : undefined }))
                 }
                 slotProps={{ textField: { fullWidth: true } }}
               />
@@ -626,7 +626,7 @@ export default function ContractsPage() {
                 value={editForm.notice_period_days || ''}
                 onChange={(e) => setEditForm(prev => ({ 
                   ...prev, 
-                  notice_period_days: e.target.value ? parseInt(e.target.value) : null 
+                  notice_period_days: e.target.value ? parseInt(e.target.value) : undefined 
                 }))}
                 helperText="Days before renewal to provide notice"
               />
