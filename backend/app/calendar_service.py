@@ -1,9 +1,11 @@
-from typing import List
+"""Calendar event derivation and ICS export utilities."""
+
+from typing import List, Optional
 from datetime import datetime
 from . import models, schemas
 
 def generate_calendar_events(contracts: List[models.Contract]) -> List[schemas.CalendarEvent]:
-    """Generate calendar events from contracts"""
+    """Generate calendar events from persisted contracts."""
     events = []
     
     for contract in contracts:
@@ -44,8 +46,21 @@ def generate_calendar_events(contracts: List[models.Contract]) -> List[schemas.C
     
     return events
 
-def generate_ics_content(events: List[schemas.CalendarEvent]) -> str:
-    """Generate ICS calendar content from events"""
+def _alarm_block(trigger_days: Optional[int]) -> List[str]:
+    if trigger_days is None or trigger_days <= 0:
+        return []
+    # Alarm triggers trigger_days before the event (all-day)
+    minutes = trigger_days * 24 * 60
+    return [
+        "BEGIN:VALARM",
+        f"TRIGGER:-PT{minutes}M",
+        "ACTION:DISPLAY",
+        "DESCRIPTION:Reminder",
+        "END:VALARM",
+    ]
+
+def generate_ics_content(events: List[schemas.CalendarEvent], reminder_days: Optional[int] = None) -> str:
+    """Generate ICS calendar content from events with optional reminders"""
     
     # ICS header
     ics_lines = [
@@ -70,7 +85,7 @@ def generate_ics_content(events: List[schemas.CalendarEvent]) -> str:
         priority = "1" if event.kind == "notice_deadline" else "5"
         
         # ICS event
-        ics_lines.extend([
+        block = [
             "BEGIN:VEVENT",
             f"UID:{uid}",
             f"DTSTART;VALUE=DATE:{date_str}",
@@ -81,8 +96,11 @@ def generate_ics_content(events: List[schemas.CalendarEvent]) -> str:
             f"PRIORITY:{priority}",
             "STATUS:CONFIRMED",
             "TRANSP:TRANSPARENT",
-            "END:VEVENT"
-        ])
+        ]
+        # Optional alarm
+        block.extend(_alarm_block(reminder_days))
+        block.append("END:VEVENT")
+        ics_lines.extend(block)
     
     # ICS footer
     ics_lines.append("END:VCALENDAR")

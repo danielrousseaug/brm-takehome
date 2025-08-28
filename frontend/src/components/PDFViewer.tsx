@@ -1,3 +1,9 @@
+/**
+ * PDFViewer: displays the uploaded contract PDF with two modes:
+ * 1) an OCR/text layer to enable clause highlighting and searching, and
+ * 2) the original canvas-rendered PDF for fidelity.
+ * Also provides download/open controls and a simple highlight legend.
+ */
 import React, { useMemo, useRef, useState, useCallback } from 'react'
 import {
   Box,
@@ -13,6 +19,8 @@ import {
 import { OpenInNew, Download, ZoomIn, ZoomOut, NavigateBefore, NavigateNext } from '@mui/icons-material'
 import { Contract } from '../types'
 import { Document, Page, pdfjs } from 'react-pdf'
+import dayjs from 'dayjs'
+import { contractsApi } from '../services/api'
 
 // Configure pdf.js worker
 pdfjs.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js'
@@ -33,11 +41,20 @@ export default function PDFViewer({ contract, pdfUrl, highlightedClauses = [] }:
   const [scale, setScale] = useState(1.2)
   const [error, setError] = useState<string | null>(null)
   const [foundTypes, setFoundTypes] = useState<string[]>([])
+  const [ocrText, setOcrText] = useState<string | null>(null)
+
+  // Unified color palette for overlay and chips
+  const HIGHLIGHT_COLORS: Record<string, { fill: string; border: string; chipBg: string; chipBorder: string; text: string }> = {
+    notice: { fill: 'rgba(220, 0, 78, 0.24)', border: '#dc004e', chipBg: 'rgba(220, 0, 78, 0.12)', chipBorder: '#dc004e', text: '#0f1115' },
+    date:   { fill: 'rgba(25, 118, 210, 0.24)', border: '#1976d2', chipBg: 'rgba(25, 118, 210, 0.12)', chipBorder: '#1976d2', text: '#0f1115' },
+    term:   { fill: 'rgba(255, 152, 0, 0.22)', border: '#ff9800', chipBg: 'rgba(255, 152, 0, 0.12)', chipBorder: '#ff9800', text: '#0f1115' },
+    vendor: { fill: 'rgba(156, 39, 176, 0.24)', border: '#9c27b0', chipBg: 'rgba(156, 39, 176, 0.12)', chipBorder: '#9c27b0', text: '#0f1115' },
+  }
 
   const getClauseTypeColor = (type: string) => {
     switch (type) {
       case 'date': return 'primary'
-      case 'vendor': return 'secondary' 
+      case 'vendor': return 'secondary'
       case 'term': return 'warning'
       case 'notice': return 'error'
       default: return 'default'
@@ -79,16 +96,42 @@ export default function PDFViewer({ contract, pdfUrl, highlightedClauses = [] }:
     )
   }
 
-  // Prepare regex for highlighting
+  // Build robust highlight targets: support variants for dates and notice phrasing
   const highlightConfigs = useMemo(() => {
-    return highlightedClauses
+    const items: Array<{ text: string; type: string }> = []
+    highlightedClauses
       .filter(c => c.text && c.text.trim().length > 0)
-      .map(c => ({
-        ...c,
-        regex: new RegExp(c.text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')
-      }))
+      .forEach(c => {
+        const base = c.text.trim()
+        if (c.type === 'date') {
+          const d = dayjs(base)
+          if (d.isValid()) {
+            const variants = Array.from(new Set([
+              d.format('YYYY-MM-DD'),
+              d.format('MMMM D, YYYY'),
+              d.format('MMM D, YYYY'),
+              d.format('D MMMM YYYY'),
+              d.format('M/D/YYYY'),
+              d.format('MM/DD/YYYY')
+            ]))
+            variants.forEach(v => items.push({ text: v, type: c.type }))
+          } else {
+            items.push({ text: base, type: c.type })
+          }
+        } else if (c.type === 'notice') {
+          const n = parseInt(base.replace(/[^0-9]/g, ''), 10)
+          if (!Number.isNaN(n)) {
+            ;[`${n} days`, `${n} day`, `(${n}) days`, `(${n}) day`].forEach(v => items.push({ text: v, type: c.type }))
+          } else {
+            items.push({ text: base, type: c.type })
+          }
+        } else {
+          items.push({ text: base, type: c.type })
+        }
+      })
+    return items
   }, [highlightedClauses])
-  const containerRef = useRef<HTMLDivElement>(null)
+  const ocrContainerRef = useRef<HTMLDivElement>(null)
   const escapeHtml = (s: string) => s
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -97,8 +140,8 @@ export default function PDFViewer({ contract, pdfUrl, highlightedClauses = [] }:
     .replace(/'/g, '&#039;')
 
   const applyHighlights = useCallback(() => {
-    if (!containerRef.current || !highlightConfigs.length) return
-    const textLayer = containerRef.current.querySelector('.react-pdf__Page__textContent') as HTMLElement | null
+    if (!ocrContainerRef.current || !highlightConfigs.length) return
+    const textLayer = ocrContainerRef.current.querySelector('.react-pdf__Page__textContent') as HTMLElement | null
     if (!textLayer) return
     const spans = Array.from(textLayer.querySelectorAll('span')) as HTMLSpanElement[]
     if (!spans.length) return
@@ -166,9 +209,9 @@ export default function PDFViewer({ contract, pdfUrl, highlightedClauses = [] }:
           // flush previous buffer
           if (buffer) {
             if (currentType) {
-              const color = currentType === 'notice' ? '#ffebee' : currentType === 'date' ? '#e3f2fd' : currentType === 'term' ? '#fff3e0' : '#f3e5f5'
-              const border = currentType === 'notice' ? '#dc004e' : currentType === 'date' ? '#1976d2' : currentType === 'term' ? '#ff9800' : '#9c27b0'
-              html += `<span data-hl="1" style="background-color:${color}; border:1px solid ${border}; border-radius:3px; padding:0 2px;">${buffer}</span>`
+              const cfg = HIGHLIGHT_COLORS[currentType] || { fill: 'rgba(122,162,247,0.24)', text: '#0f1115' } as any
+              // Soft filled highlight with light padding
+              html += `<span data-hl="1" style="background-color:${cfg.fill}; color:${cfg.text}; padding:0 1px; border-radius:2px;">${buffer}</span>`
               found.add(currentType)
             } else {
               html += buffer
@@ -182,9 +225,8 @@ export default function PDFViewer({ contract, pdfUrl, highlightedClauses = [] }:
       // flush last buffer
       if (buffer) {
         if (currentType) {
-          const color = currentType === 'notice' ? '#ffebee' : currentType === 'date' ? '#e3f2fd' : currentType === 'term' ? '#fff3e0' : '#f3e5f5'
-          const border = currentType === 'notice' ? '#dc004e' : currentType === 'date' ? '#1976d2' : currentType === 'term' ? '#ff9800' : '#9c27b0'
-          html += `<span data-hl="1" style="background-color:${color}; border:1px solid ${border}; border-radius:3px; padding:0 2px;">${buffer}</span>`
+          const cfg = HIGHLIGHT_COLORS[currentType] || { fill: 'rgba(122,162,247,0.24)', text: '#0f1115' } as any
+          html += `<span data-hl="1" style="background-color:${cfg.fill}; color:${cfg.text}; padding:0 1px; border-radius:2px;">${buffer}</span>`
           found.add(currentType)
         } else {
           html += buffer
@@ -195,6 +237,17 @@ export default function PDFViewer({ contract, pdfUrl, highlightedClauses = [] }:
 
     setFoundTypes(Array.from(found))
   }, [highlightConfigs])
+
+  // When the OCR-only text layer renders empty (image scan PDFs), fetch OCR text from backend
+  const ensureOcrText = useCallback(async () => {
+    try {
+      if (ocrText !== null) return
+      const text = await contractsApi.getContractOCRText(contract.id)
+      setOcrText(text || '')
+    } catch (e) {
+      setOcrText('')
+    }
+  }, [contract.id, ocrText])
 
   return (
     <Box>
@@ -217,41 +270,108 @@ export default function PDFViewer({ contract, pdfUrl, highlightedClauses = [] }:
           </Stack>
         </Stack>
 
-        {(foundTypes.length > 0 || highlightedClauses.length > 0) && (
-          <Stack direction="row" spacing={1} sx={{ mt: 2 }} flexWrap="wrap">
-            <Typography variant="caption" color="text.secondary">Highlighted:</Typography>
-            {Array.from(new Set((foundTypes.length ? foundTypes : highlightedClauses.map(c => c.type)))).map(type => (
-              <Chip
-                key={type}
-                label={type}
-                size="small"
-                color={getClauseTypeColor(type) as any}
-                variant="outlined"
-              />
-            ))}
-          </Stack>
-        )}
+        <Stack direction="row" spacing={1} sx={{ mt: 2 }} flexWrap="wrap">
+          <Typography variant="caption" color="text.secondary">Highlighted:</Typography>
+          {foundTypes.length > 0 ? (
+            Array.from(new Set(foundTypes)).map(type => {
+              const cfg = HIGHLIGHT_COLORS[type] || { chipBg: 'rgba(122,162,247,0.12)', chipBorder: '#7aa2f7' } as any
+              return (
+                <Chip
+                  key={type}
+                  label={type}
+                  size="small"
+                  variant="outlined"
+                  sx={{ bgcolor: cfg.chipBg, borderColor: cfg.chipBorder, color: '#e6edf3' }}
+                />
+              )
+            })
+          ) : (
+            <Typography variant="caption" color="text.secondary">none found on this page</Typography>
+          )}
+        </Stack>
       </Paper>
 
       {/* Inline PDF Viewer */}
-      <Paper sx={{ p: 2 }}>
-        <Box ref={containerRef} sx={{ display: 'flex', justifyContent: 'center' }}>
+      {/* OCR / Highlight view (text-only layer) */}
+      <Paper sx={{ p: 2, bgcolor: 'background.paper', borderRadius: 2, mb: 2 }}>
+        <Box ref={ocrContainerRef} sx={{
+          display: 'flex',
+          justifyContent: 'center',
+          mx: 'auto',
+          // Hide the canvas so we only see the text layer
+          '& .react-pdf__Page__canvas': { display: 'none !important' },
+          // Make OCR text readable
+          '& .react-pdf__Page__textContent': {
+            color: '#000000',
+            mixBlendMode: 'normal',
+            paddingLeft: '16px',
+            paddingTop: '16px',
+            boxSizing: 'content-box'
+          },
+        }}>
           <Document
             file={pdfUrl}
             loading={(
               <Box sx={{ p: 6, textAlign: 'center' }}>
-                <CircularProgress />
-                <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>Loading PDF...</Typography>
+                <CircularProgress color="primary" />
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>Loading OCR…</Typography>
               </Box>
             )}
             onLoadError={(e) => setError((e as any)?.message || 'Failed to load PDF')}
-            onLoadSuccess={({ numPages }) => { setNumPages(numPages); setPageNumber(1); setTimeout(applyHighlights, 0) }}
+            onLoadSuccess={() => setTimeout(applyHighlights, 0)}
           >
             <Page
               pageNumber={pageNumber}
               scale={scale}
               renderTextLayer
               onRenderSuccess={() => setTimeout(applyHighlights, 0)}
+              renderAnnotationLayer={false}
+            />
+          </Document>
+        </Box>
+
+        {/* Fallback for pure image PDFs: render plain OCR text when no text layer/chunks exist */}
+        {ocrText !== null && ocrText.trim().length > 0 && (
+          <Box sx={{ mt: 2, px: 2 }}>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>OCR text (fallback)</Typography>
+            <Box sx={{
+              whiteSpace: 'pre-wrap',
+              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+              fontSize: 12,
+              lineHeight: 1.5,
+              color: '#e6edf3',
+              bgcolor: 'rgba(148,163,184,0.08)',
+              border: '1px dashed',
+              borderColor: 'divider',
+              p: 1.5,
+              borderRadius: 1
+            }}>
+              {ocrText}
+            </Box>
+          </Box>
+        )}
+      </Paper>
+
+      {/* Original PDF (clean) */}
+      <Paper sx={{ p: 2, bgcolor: 'background.paper', borderRadius: 2 }}>
+        <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>Original PDF</Typography>
+        <Box sx={{ display: 'flex', justifyContent: 'center', mx: 'auto' }}>
+          <Document
+            file={pdfUrl}
+            loading={(
+              <Box sx={{ p: 6, textAlign: 'center' }}>
+                <CircularProgress color="primary" />
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>Loading PDF...</Typography>
+              </Box>
+            )}
+            onLoadError={(e) => setError((e as any)?.message || 'Failed to load PDF')}
+            onLoadSuccess={({ numPages }) => { setNumPages(numPages); setPageNumber(1) }}
+          >
+            <Page
+              pageNumber={pageNumber}
+              scale={scale}
+              renderTextLayer={false}
+              renderAnnotationLayer={false}
             />
           </Document>
         </Box>

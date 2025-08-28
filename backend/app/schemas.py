@@ -1,5 +1,7 @@
+"""Pydantic schemas for API request/response validation and serialization."""
+
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Dict, List
 from datetime import date, datetime
 
 class ContractBase(BaseModel):
@@ -10,6 +12,11 @@ class ContractBase(BaseModel):
     renewal_date: Optional[date] = None
     renewal_term: Optional[str] = None
     notice_period_days: Optional[int] = None
+    # Review/uncertainty metadata
+    needs_review: Optional[bool] = None
+    extraction_notes: Optional[str] = None
+    uncertain_fields: Optional[List[str]] = None
+    candidate_dates: Optional[Dict[str, List[date]]] = None
 
 class ContractCreate(ContractBase):
     file_name: str
@@ -32,6 +39,7 @@ class Contract(ContractBase):
         from_attributes = True
 
 class UploadResponse(BaseModel):
+    """Response for multi-file upload; items mirror minimal per-file status."""
     items: list[dict]
 
 class CalendarEvent(BaseModel):

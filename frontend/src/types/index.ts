@@ -14,6 +14,11 @@ export interface Contract {
   created_at: string;
   updated_at: string;
   pdf_path: string;
+  // Review/uncertainty metadata
+  needs_review?: boolean;
+  extraction_notes?: string | null;
+  uncertain_fields?: string[] | null;
+  candidate_dates?: Record<string, string[]> | null;
 }
 
 export interface CalendarEvent {
@@ -41,4 +46,9 @@ export interface ContractUpdate {
   renewal_date?: string;
   renewal_term?: string;
   notice_period_days?: number;
+  // Review/uncertainty metadata
+  needs_review?: boolean;
+  extraction_notes?: string | null;
+  uncertain_fields?: string[];
+  candidate_dates?: Record<string, string[]>;
 }

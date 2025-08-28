@@ -1,185 +1,240 @@
 # BRM Renewal Calendar
 
-A full-stack web application that ingests Purchase Agreement PDFs and presents a renewal calendar showing upcoming deadlines and renewal dates.
+A full‑stack application that ingests Purchase Agreement PDFs, extracts key terms (vendor, dates, notice period, renewal terms), and presents them in a Contracts table and a Calendar with ICS export/email. Includes OCR fallback for scanned PDFs and a dual PDF preview (original + OCR/highlight).
 
-## What it does
+## Table of Contents
+- Overview
+- Features
+- Tech Stack
+- Project Structure
+- Setup & Running
+  - Docker (recommended)
+  - Local dev (without Docker)
+  - Environment variables
+- Architecture & Data Flow
+  - Backend (FastAPI)
+  - Frontend (React + TypeScript)
+  - Extraction pipeline (PDF → OCR → AI → Normalize)
+- Database & Models
+- API Reference
+- Frontend UX
+- PDF Preview & Highlighting
+- Calendar & ICS Export
+- Emailing ICS (SMTP)
+- File Storage & Cleanup
+- Testing & Diagnostics
+- Troubleshooting
+- Roadmap / Next Steps
 
-The BRM Renewal Calendar helps track contractual obligations by:
+---
 
-1. **PDF Upload**: Upload purchase agreement PDFs through a drag-and-drop interface
-2. **AI Extraction**: Uses OpenRouter API (GPT-4) to extract key contract dates and terms
-3. **Data Review**: Review and edit extracted contract information through an intuitive interface
-4. **Calendar View**: Visualize renewal dates, notice deadlines, and contract expirations in a calendar format
+## Overview
+- Upload one or more PDF agreements
+- AI extracts start/end/renewal dates, renewal terms, notice period, and vendor
+- Review and edit extracted values; `notice_deadline` is computed automatically
+- See all events on a calendar and export/email ICS
+- Preview both the original PDF and a text/OCR overlay with highlights
 
-Key features:
-- Automatic extraction of start dates, end dates, renewal dates, notice periods
-- Computed notice deadlines (renewal date - notice period days)  
-- Visual calendar with color-coded events (notice deadlines in red, renewals in blue)
-- Editable contract data with real-time deadline recalculation
-- Support for multiple PDF formats with text extraction
+## Features
+- Concurrent PDF processing per file
+- PyMuPDF text extraction with Tesseract OCR fallback for image-only scans
+- AI extraction via OpenRouter (GPT‑4); server-side validation/normalization
+- Contracts CRUD + bulk clear
+- Calendar event generation (notice deadline, renewal date, expiration)
+- ICS export and ICS email with optional reminders
+- PDF preview (original) and OCR/text‑only view with soft highlights
+- Best‑effort removal of uploaded files on delete/clear
 
-## Quick Start
+## Tech Stack
+- Backend: FastAPI, SQLAlchemy, Pydantic v2, Uvicorn
+- PDF/OCR: PyMuPDF (fitz), Pillow, pytesseract (Tesseract installed in backend image)
+- HTTP client: httpx
+- Frontend: React 18, TypeScript, Vite, Material UI (MUI), FullCalendar, Day.js, React-PDF
+- DB: SQLite
+- Containers: Docker + docker-compose
 
-### Prerequisites
-- Docker and Docker Compose
-- OpenRouter API key (should have been provided via email)
+## Project Structure
+```
+brm-takehome/
+  backend/
+    app/
+      main.py                # FastAPI app & routes
+      models.py              # SQLAlchemy models
+      schemas.py             # Pydantic schemas
+      database.py            # DB engine/session
+      pdf_extractor.py       # Text extraction + OCR + AI + normalization
+      calendar_service.py    # Calendar event + ICS generation
+    Dockerfile
+    requirements.txt
+  frontend/
+    src/
+      pages/                 # Upload, Contracts, Calendar
+      components/            # PDFViewer (original + OCR/highlights)
+      services/api.ts        # API client
+      types/                 # TS types aligned with backend
+    Dockerfile
+  docker-compose.yml
+  README.md (this file)
+```
 
-### Setup
+## Setup & Running
+### Docker (recommended)
+Create `.env` in the repo root:
+```
+OPENROUTER_API_KEY=your_openrouter_key
+# Optional SMTP for emailing ICS
+# SMTP_HOST=localhost
+# SMTP_PORT=25
+# SMTP_USER=
+# SMTP_PASS=
+# SMTP_TLS=false
+# SMTP_FROM=no-reply@example.com
+```
+Run:
+```
+docker compose up --build
+```
+- Frontend: `http://localhost:5173`
+- Backend: `http://localhost:8000` (OpenAPI docs at `/docs`)
 
-1. Clone this repository or extract the ZIP file
-2. Set up your environment:
-   ```bash
-   cp .env.example .env
-   # Edit .env and add your OPENROUTER_API_KEY
-   ```
-
-3. Start the application:
-   ```bash
-   docker compose up --build
-   ```
-
-4. Access the application:
-   - Frontend: http://localhost:5173
-   - Backend API: http://localhost:8000
-
-### Alternative Local Development Setup
-
-If you prefer to run without Docker:
-
-**Backend:**
-```bash
+### Local dev (without Docker)
+Backend:
+```
 cd backend
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 export OPENROUTER_API_KEY=your_key_here
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
+Install Tesseract if you want OCR locally:
+- macOS (brew): `brew install tesseract`
+- Ubuntu/Debian: `sudo apt-get install tesseract-ocr`
+- Windows: use WSL or install a Tesseract build and ensure it’s on PATH
 
-**Frontend:**
-```bash
-cd frontend  
+Frontend:
+```
+cd frontend
 npm install
 npm run dev
 ```
+By default the frontend talks to `http://localhost:8000`. You can override via `VITE_API_BASE_URL`.
 
-The frontend respects `VITE_API_BASE_URL` (set by Docker Compose). For local non-Docker, it defaults to `http://localhost:8000`.
+### Environment Variables
+Backend:
+- `OPENROUTER_API_KEY` (required)
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_TLS`, `SMTP_FROM` (optional for emailing ICS)
+Frontend:
+- `VITE_API_BASE_URL` (optional). docker-compose sets this to the backend URL.
 
-## Usage
-
-1. **Upload PDFs**: Go to the Upload page and drag-and-drop PDF files or click to select
-2. **Review Contracts**: Navigate to Contracts page to see extracted data and edit any fields
-3. **View Calendar**: Check the Calendar page for a visual timeline of renewal dates and notice deadlines
-
-## Tech Stack & Architecture
-
-### Backend (Python + FastAPI)
-- **FastAPI**: Modern, fast web framework with automatic API documentation
-- **SQLAlchemy + SQLite**: Database ORM and lightweight database for contract storage
-- **PyMuPDF (fitz)**: PDF text extraction library
-- **OpenRouter API**: Unified API for calling GPT-4 and other language models
-- **Uvicorn**: ASGI server for running the FastAPI application
-
-### Frontend (React + TypeScript)
-- **React + TypeScript**: Type-safe component-based UI development
-- **Material-UI**: Google's Material Design components for consistent UX
-- **FullCalendar**: Professional calendar component with multiple view options
-- **React Dropzone**: Drag-and-drop file upload interface
-- **Day.js**: Lightweight date manipulation library
-- **Vite**: Fast build tool and development server
-
-### Data Flow
+## Architecture & Data Flow
 ```
-PDF Upload → Text Extraction (PyMuPDF) → AI Processing (OpenRouter/GPT-4) → 
-Data Validation & Normalization → SQLite Storage → Calendar Event Generation → UI Display
+Upload PDFs → Save file (uploads/) → Extract text (PyMuPDF)
+  ↳ If low/empty text → OCR page images with Tesseract
+→ AI extraction (OpenRouter/GPT‑4) → Validate/normalize (dates, ints)
+→ Persist Contract (SQLite) → Compute notice_deadline
+→ Calendar events → ICS export/email → Frontend UI
 ```
 
-## Technical Decisions & Tradeoffs
+### Backend (FastAPI)
+- Concurrency per uploaded file (`asyncio.create_task`) with independent DB sessions
+- Consistent JSON error shape for HTTP/validation/errors
+- CORS allowed for `http://localhost:5173`
+- Storage: PDFs in `uploads/`; DB is `sqlite:///./contracts.db`
 
-### What I Built
-- **Minimal MVP**: Focused on core upload → extract → calendar workflow
-- **AI-First Extraction**: Used GPT-4 for robust date and term extraction rather than regex patterns
-- **Server-Side Date Logic**: All deadline computations happen in the backend for consistency
-- **Material Design**: Chose proven UI components for professional appearance
-- **SQLite**: Simple, file-based database suitable for prototype/demo environments
+### Frontend (React)
+- Upload flow with statuses, Contracts table (sortable), Edit dialog (recompute deadline), Calendar views, PDF viewer dialog
+- API client wraps endpoints with TypeScript types
 
-### What I Didn't Build (and Why)
-- **No OCR**: Scanned PDFs aren't supported to keep scope manageable; PyMuPDF handles most text-based PDFs
-- **No Authentication**: Single-user prototype; would add user management for production
-- **No Background Processing**: Upload processing is synchronous; would use Celery/Redis for production scale
-- **No PDF Viewer**: Focused on extracted data rather than document preview functionality
-- **No Advanced Notifications**: No email/Slack integration; calendar view provides visibility
-
-### Key Engineering Decisions
-1. **Strict JSON Prompting**: Used precise system/user prompts to ensure consistent AI output format
-2. **Frontend State Management**: Kept simple with React hooks rather than Redux for prototype scope  
-3. **Error Handling**: Graceful degradation when PDF text extraction or AI processing fails
-4. **Date Validation**: Server-side validation and normalization of date formats from AI responses
-5. **Real-time Updates**: Immediate deadline recalculation when users edit renewal dates or notice periods
-
-## Data Model
-
-**Contracts Table:**
-- Basic info: `id`, `file_name`, `display_name`, `pdf_path`
-- Contract dates: `start_date`, `end_date`, `renewal_date`  
+## Database & Models
+`models.Contract`:
+- Identity: `id`
+- Files: `file_name`, `pdf_path`, `display_name`, `vendor_name`
+- Dates: `start_date`, `end_date`, `renewal_date`, computed `notice_deadline`
 - Terms: `renewal_term`, `notice_period_days`
-- Computed: `notice_deadline` (renewal_date - notice_period_days)
-- Metadata: `extraction_status`, `extraction_confidence`, timestamps
+- Extraction: `extraction_status` (pending|success|failed), `extraction_confidence`
+- Timestamps: `created_at`, `updated_at`
 
-**Calendar Events:** Generated dynamically from contract data with different event types (notice_deadline, renewal_date, expiration)
+`compute_notice_deadline()` sets `notice_deadline = renewal_date − notice_period_days` when both exist.
 
-## What I Would Build Next
+## API Reference
+Base URL `http://localhost:8000`
 
-If I had more time, I would prioritize:
+### Contracts
+- `POST /contracts` — upload one or more PDFs (multipart field name: `files`).
+  - Response: `{ "items": [{ id, file_name, extraction_status }] }`
+- `GET /contracts` — list all contracts → `Contract[]`
+- `GET /contracts/{id}` — get one → `Contract`
+- `PUT /contracts/{id}` — update editable fields (display_name, vendor_name, start_date, end_date, renewal_date, renewal_term, notice_period_days). Recomputes `notice_deadline`.
+- `DELETE /contracts/{id}` — deletes the contract and best‑effort deletes the associated file.
+- `DELETE /contracts` — clears all contracts, deletes referenced files, then purges remaining files in `uploads/`.
 
-### P1 (High Value, Low Effort)
-- **ICS Export**: Download calendar events as .ics file for importing into Outlook/Google Calendar
-- **Bulk Upload Progress**: Real-time progress bars for multiple file uploads  
-- **Enhanced Error Messages**: More specific feedback when PDF processing fails
+### PDF & OCR
+- `GET /contracts/{id}/pdf?download=false` — serve inline PDF (CORS headers set). Use `download=true` to force download.
+- `HEAD /contracts/{id}/pdf` — lightweight presence check.
+- `GET /contracts/{id}/ocr_text` — returns `{ text }` using the same OCR fallback used during ingestion (useful for image‑only scans in preview).
 
-### P2 (Medium Value, Medium Effort)  
-- **Email Notifications**: Automated reminders 30/7 days before notice deadlines
-- **Vendor/Party Extraction**: Parse and display contracting parties from PDFs
-- **Contract Search/Filtering**: Filter contracts by vendor, date range, or status
+### Calendar & ICS
+- `GET /calendar` — `{ events: CalendarEvent[] }` with kinds: `notice_deadline`, `renewal_date`, `expiration`.
+- `GET /calendar.ics?reminder_days=7` — ICS export with optional `VALARM` reminder.
+- `POST /calendar/email` — `{ to: string[], reminder_days?: number }` to send the ICS via SMTP.
 
-### P3 (Lower Priority)
-- **OCR Support**: Handle scanned PDFs using Tesseract or cloud OCR services
-- **PDF Viewer Integration**: Inline PDF viewing with highlighted extracted clauses
-- **Advanced Calendar Features**: Recurring reminders, multi-user calendars, time zones
+### Errors
+All errors are shaped as:
+```
+{ "error": { "code": "validation_error|not_found|internal|http_error", "message": "..." } }
+```
 
-## Known Limitations
+## Frontend UX
+- **Upload**: drag‑and‑drop, shows per-file progress state; after processing, quick links to Contracts/Calendar.
+- **Contracts**: sortable columns; edit dialog for fields; delete one or clear all; actions have fixed sizes to prevent layout shift.
+- **Calendar**: Month/List views with filter cards; Export dialog supports ICS download or email with optional reminder days.
+- **PDF Viewer**: dialog with original PDF and OCR/text overlay (see below).
 
-- **PDF Text Quality**: Extraction quality depends on PDF text layer; scanned documents not supported
-- **AI Model Accuracy**: GPT-4 may occasionally misinterpret complex legal language or date formats  
-- **Single Tenant**: No user authentication or data isolation
-- **Limited Error Recovery**: Failed extractions require manual data entry rather than retry mechanisms
-- **No Audit Trail**: Changes to contract data aren't versioned or logged
+## PDF Preview & Highlighting
+- Two stacked sections:
+  1) OCR/Text‑only view with soft background highlights for fields (vendor/date/term/notice). If the PDF has no embedded text layer, we still show OCR text fallback.
+  2) Original PDF (no overlay) for pixel‑accurate viewing.
+- Date highlights attempt common formats (ISO, “MMM D, YYYY”, “MM/DD/YYYY”, etc.) so the overlay can match typical date renderings.
+- Highlight chip colors match overlay colors; only found types are shown.
 
-## API Documentation
+## Calendar & ICS Export
+- Events are all‑day; `notice_deadline` is prioritized.
+- ICS includes optional `VALARM` that triggers `reminder_days` before an event (converted to minutes).
 
-Once running, visit http://localhost:8000/docs for interactive API documentation generated by FastAPI.
+## Emailing ICS (SMTP)
+- Configure SMTP via environment variables. If `SMTP_TLS=true`, a STARTTLS session is used. If `SMTP_USER`/`SMTP_PASS` are set, the server logs in before sending.
+- Sender defaults to `no-reply@example.com` unless `SMTP_FROM` is provided.
 
-**Key Endpoints:**
-- `POST /contracts` - Upload PDF files
-- `GET /contracts` - List all contracts  
-- `PUT /contracts/{id}` - Update contract data
-- `GET /calendar` - Get calendar events
+## File Storage & Cleanup
+- Uploaded PDFs are stored under `uploads/{uuid}_{originalName}`.
+- Deleting a single contract removes its file best‑effort.
+- Bulk clear removes all contract files and then purges any remaining files in `uploads/` to avoid orphans.
 
-## Testing
+## Testing & Diagnostics
+- Explore the API: `http://localhost:8000/docs`
+- Quick smoke test:
+```
+python test_app.py
+```
+The script checks API health, performs a sample upload (expects `SampleAgreements/BRM_OrderForm_Anthropic.pdf`), lists contracts, and fetches calendar events.
 
-The application has been tested with the provided sample PDFs. To test:
+## Troubleshooting
+- OpenRouter errors: set `OPENROUTER_API_KEY`, ensure egress is allowed; default model is `openai/gpt-4`.
+- No highlights in preview: for dates, multiple formats are attempted; if vendor/term not matching, edit values and reopen.
+- OCR missing: ensure Tesseract is installed for local runs (Docker image already has it). Low‑quality scans may still be unreliable.
+- CORS/access issues: `VITE_API_BASE_URL` must point to backend; backend CORS allows `http://localhost:5173`.
+- Ports busy: adjust ports in `docker-compose.yml`.
+- SQLite locked: if running multiple backend processes, move to Postgres.
+- Email errors: verify SMTP host/port/TLS/auth.
 
-1. Start the application with `docker compose up`
-2. Upload your own sample PDFs (bring your own). If you have a `SampleAgreements/` folder locally, feel free to use it.
-3. Verify extraction results in the Contracts page
-4. Check that events appear correctly in the Calendar page
-5. Edit a contract's renewal date/notice period and confirm the calendar updates
+## Roadmap / Next Steps
+- Postgres + Alembic migrations
+- Background jobs (Celery/Redis) for large batch uploads
+- Authentication & multi‑tenant isolation
+- Notification scheduling (email/Slack) ahead of deadlines
+- Enhanced validation and review workflows
+- Upload size limits & content scanning
 
-## Deployment Considerations
+---
 
-For production deployment:
-- Use PostgreSQL instead of SQLite
-- Add proper authentication and user management  
-- Implement background job processing (Celery + Redis)
-- Add comprehensive logging and monitoring
-- Set up proper environment variable management
-- Configure reverse proxy (nginx) and SSL certificates
-- Add rate limiting and file upload size restrictions
+Made with FastAPI, React, and a pragmatic focus on clear UX and dependable extraction.

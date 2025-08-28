@@ -1,30 +1,61 @@
+"""FastAPI application entrypoint for the BRM Renewal Calendar API.
+
+Endpoints:
+- Upload and process contracts
+- CRUD over contracts
+- Calendar events and ICS export/email
+- PDF streaming (inline/download)
+"""
+
 import os
 import asyncio
 import uuid
-from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Response, Form
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Response
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel, EmailStr
+import smtplib
+from email.message import EmailMessage
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from typing import List
-from datetime import date, datetime
+from datetime import datetime
 
 from . import models, schemas
-from .database import SessionLocal, engine, get_db
+from .database import SessionLocal, engine, get_db, apply_lightweight_migrations
 from .pdf_extractor import extract_text_from_pdf, extract_contract_data
 from .calendar_service import generate_calendar_events, generate_ics_content
 
-def generate_smart_display_name(vendor_name: str, original_filename: str, db: Session) -> str:
-    """Generate a smart display name for contracts"""
-    
-    # If vendor name extracted, use it; otherwise use original filename without extension
-    if vendor_name:
-        return vendor_name.strip()
-    else:
-        return original_filename.rsplit('.', 1)[0]
+def _safe_remove_file(path: str) -> None:
+    try:
+        if path and os.path.exists(path):
+            os.remove(path)
+    except Exception:
+        # Silently ignore; deletion best-effort
+        pass
+
+def _purge_uploads_dir() -> None:
+    """Best-effort removal of all files in uploads/ to avoid orphaned files."""
+    try:
+        uploads_dir = os.path.join(os.getcwd(), "uploads")
+        if os.path.isdir(uploads_dir):
+            for name in os.listdir(uploads_dir):
+                _safe_remove_file(os.path.join(uploads_dir, name))
+    except Exception:
+        pass
+
+def generate_smart_display_name(vendor_name: str, original_filename: str) -> str:
+    """Derive a concise display name for a contract.
+
+    Preference order:
+    1) Extracted vendor name (trimmed)
+    2) Original file name without extension
+    """
+    return vendor_name.strip() if vendor_name else original_filename.rsplit('.', 1)[0]
 
 models.Base.metadata.create_all(bind=engine)
+apply_lightweight_migrations()
 
 app = FastAPI(title="BRM Renewal Calendar API", version="1.0.0")
 
@@ -118,18 +149,23 @@ async def _process_single_file(file: UploadFile) -> dict:
         contract.renewal_date = extracted_data.get("renewal_date")
         contract.renewal_term = extracted_data.get("renewal_term")
         contract.notice_period_days = extracted_data.get("notice_period_days")
+        # Uncertainty/Review metadata
+        contract.needs_review = bool(extracted_data.get("needs_review"))
+        contract.extraction_notes = extracted_data.get("extraction_notes")
+        contract.uncertain_fields = extracted_data.get("uncertain_fields")
+        contract.candidate_dates = extracted_data.get("candidate_dates")
 
         # Display name
         contract.display_name = generate_smart_display_name(
             vendor_name=contract.vendor_name,
             original_filename=file.filename,
-            db=local_db
         )
 
         # Compute deadline
         contract.compute_notice_deadline()
         contract.extraction_status = "success"
-        contract.extraction_confidence = 1.0
+        # Confidence: simple heuristic — lower if needs_review
+        contract.extraction_confidence = 0.7 if contract.needs_review else 1.0
         local_db.commit()
 
         return {"id": contract.id, "file_name": file.filename, "extraction_status": "success"}
@@ -176,7 +212,10 @@ def update_contract(
         raise HTTPException(status_code=404, detail="Contract not found")
     
     # Update fields
-    update_data = contract_update.dict(exclude_unset=True)
+    try:
+        update_data = contract_update.model_dump(exclude_unset=True)  # pydantic v2-safe
+    except Exception:
+        update_data = contract_update.dict(exclude_unset=True)
     for field, value in update_data.items():
         setattr(contract, field, value)
     
@@ -199,11 +238,8 @@ def delete_contract(contract_id: int, db: Session = Depends(get_db)):
     if not contract:
         raise HTTPException(status_code=404, detail="Contract not found")
     
-    # Delete the PDF file if it exists
-    try:
-        os.remove(contract.pdf_path)
-    except:
-        pass  # File might not exist or be inaccessible
+    # Delete the PDF file if it exists (best-effort)
+    _safe_remove_file(contract.pdf_path)
     
     db.delete(contract)
     db.commit()
@@ -213,26 +249,25 @@ def delete_contract(contract_id: int, db: Session = Depends(get_db)):
 def clear_all_contracts(db: Session = Depends(get_db)):
     contracts = db.query(models.Contract).all()
     
-    # Delete all PDF files
+    # Delete all PDF files referenced by DB
     for contract in contracts:
-        try:
-            os.remove(contract.pdf_path)
-        except:
-            pass  # File might not exist or be inaccessible
+        _safe_remove_file(contract.pdf_path)
     
     # Delete all contracts from database
     db.query(models.Contract).delete()
     db.commit()
-    return {"message": f"Cleared {len(contracts)} contracts"}
+    # Extra cleanup: purge any remaining files in uploads dir that may be orphaned
+    _purge_uploads_dir()
+    return {"message": f"Cleared {len(contracts)} contracts and removed uploads"}
 
 @app.get("/calendar.ics")
-def export_calendar_ics(db: Session = Depends(get_db)):
+def export_calendar_ics(reminder_days: int | None = None, db: Session = Depends(get_db)):
     """Export calendar events as ICS file for import into calendar applications"""
     contracts = db.query(models.Contract).all()
     events = generate_calendar_events(contracts)
     
     # Generate ICS content
-    ics_content = generate_ics_content(events)
+    ics_content = generate_ics_content(events, reminder_days=reminder_days)
     
     return Response(
         content=ics_content,
@@ -241,6 +276,48 @@ def export_calendar_ics(db: Session = Depends(get_db)):
             "Content-Disposition": "attachment; filename=brm-renewal-calendar.ics"
         }
     )
+
+class EmailCalendarRequest(BaseModel):
+    to: list[EmailStr]
+    reminder_days: int | None = None
+
+@app.post("/calendar/email")
+def email_calendar(req: EmailCalendarRequest, db: Session = Depends(get_db)):
+    """Email ICS calendar to recipients. Uses local SMTP if configured.
+    Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS env vars for auth if needed.
+    """
+    try:
+        contracts = db.query(models.Contract).all()
+        events = generate_calendar_events(contracts)
+        ics_content = generate_ics_content(events, reminder_days=req.reminder_days)
+
+        msg = EmailMessage()
+        msg["Subject"] = "BRM Contract Renewals Calendar"
+        msg["From"] = os.getenv("SMTP_FROM", "no-reply@example.com")
+        msg["To"] = ", ".join(req.to)
+        msg.set_content("Attached is the calendar of contract renewals and notice deadlines.")
+        msg.add_attachment(ics_content, subtype="calendar", maintype="text", filename="brm-renewal-calendar.ics")
+
+        host = os.getenv("SMTP_HOST", "localhost")
+        port = int(os.getenv("SMTP_PORT", "25"))
+        user = os.getenv("SMTP_USER")
+        password = os.getenv("SMTP_PASS")
+        use_tls = os.getenv("SMTP_TLS", "false").lower() == "true"
+
+        if use_tls:
+            server = smtplib.SMTP(host, port)
+            server.starttls()
+        else:
+            server = smtplib.SMTP(host, port)
+
+        if user and password:
+            server.login(user, password)
+
+        server.send_message(msg)
+        server.quit()
+        return {"ok": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/contracts/{contract_id}/pdf")
 @app.head("/contracts/{contract_id}/pdf")
@@ -267,6 +344,22 @@ def get_contract_pdf(contract_id: int, download: bool = False, db: Session = Dep
         media_type="application/pdf",
         headers=headers,
     )
+
+@app.get("/contracts/{contract_id}/ocr_text")
+def get_contract_ocr_text(contract_id: int, db: Session = Depends(get_db)):
+    """Return extracted text for a contract using the same OCR fallback used during ingestion.
+    Useful for client-side previews when the PDF has no embedded text layer.
+    """
+    contract = db.query(models.Contract).filter(models.Contract.id == contract_id).first()
+    if not contract:
+        raise HTTPException(status_code=404, detail="Contract not found")
+    if not os.path.exists(contract.pdf_path):
+        raise HTTPException(status_code=404, detail="PDF file not found")
+    try:
+        text = extract_text_from_pdf(contract.pdf_path)
+        return {"text": text or ""}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn

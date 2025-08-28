@@ -22,10 +22,24 @@ def test_health():
         return False
 
 def test_pdf_upload():
-    """Test PDF upload functionality"""
-    pdf_path = Path("SampleAgreements/BRM_OrderForm_Anthropic.pdf")
-    if not pdf_path.exists():
-        print(f"✗ Test PDF not found: {pdf_path}")
+    """Test PDF upload functionality.
+
+    Tries common sample locations:
+    - SampleAgreements/BRM_OrderForm_Anthropic.pdf (legacy)
+    - First PDF found under SampleData/ (or nested)
+    """
+    # Preferred legacy sample path
+    legacy = Path("SampleAgreements/BRM_OrderForm_Anthropic.pdf")
+    pdf_path: Path | None = None
+    if legacy.exists():
+        pdf_path = legacy
+    else:
+        # Fallback: any PDF under SampleData (non-recursive or recursive)
+        candidates = list(Path("SampleData").glob("**/*.pdf"))
+        if candidates:
+            pdf_path = candidates[0]
+    if not pdf_path or not pdf_path.exists():
+        print("✗ No sample PDF found. Place a PDF in 'SampleData/' or 'SampleAgreements/'.")
         return False
     
     try:

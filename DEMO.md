@@ -24,7 +24,7 @@ This document outlines the demo workflow for the BRM Renewal Calendar applicatio
 ## Demo Steps
 
 ### 1. Upload Phase (http://localhost:5173/upload)
-- **Action**: Drag and drop 2-3 sample PDFs from the `SampleAgreements/` folder
+- **Action**: Drag and drop 2-3 sample PDFs from your local `SampleData/` folder (or any PDFs you have)
 - **What to show**: 
   - Drag-and-drop interface
   - File upload progress and status
@@ -53,6 +53,11 @@ This document outlines the demo workflow for the BRM Renewal Calendar applicatio
   - Month view and List view toggle
   - Click on calendar event to see details popup
 - **Highlight**: Different event types and their business meaning
+
+#### Export/Share
+- Click "Export" to:
+  - Download `.ics` with optional reminder days
+  - Email `.ics` to recipients (configure `SMTP_*` envs if you want to demo email)
 
 ## Key Points to Demonstrate
 

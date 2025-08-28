@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import {
   Box,
   Typography,
@@ -9,6 +9,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TableSortLabel,
   Chip,
   IconButton,
   Dialog,
@@ -23,8 +24,10 @@ import {
   CircularProgress,
   Skeleton,
   Tooltip,
+  Snackbar,
+  Alert,
 } from '@mui/material'
-import { Edit as EditIcon, CheckCircle, Error, Pending, Delete as DeleteIcon, Clear as ClearIcon, Upload as UploadIcon, Visibility as ViewIcon } from '@mui/icons-material'
+import { EditOutlined as EditIcon, CheckCircle, Error, Pending, DeleteOutline as DeleteIcon, Clear as ClearIcon, Upload as UploadIcon, VisibilityOutlined as ViewIcon } from '@mui/icons-material'
 import { DatePicker } from '@mui/x-date-pickers/DatePicker'
 import dayjs, { Dayjs } from 'dayjs'
 import { Contract, ContractUpdate } from '../types'
@@ -37,11 +40,19 @@ export default function ContractsPage() {
   const [loading, setLoading] = useState(true)
   const [editingContract, setEditingContract] = useState<Contract | null>(null)
   const [editForm, setEditForm] = useState<ContractUpdate>({})
+  const [saving, setSaving] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [contractToDelete, setContractToDelete] = useState<Contract | null>(null)
   const [clearAllDialogOpen, setClearAllDialogOpen] = useState(false)
   const [viewingContract, setViewingContract] = useState<Contract | null>(null)
+  const [snackbar, setSnackbar] = useState<{ open: boolean, message: string, severity: 'success' | 'error' }>({ open: false, message: '', severity: 'success' })
   const navigate = useNavigate()
+
+  type Order = 'asc' | 'desc'
+  type OrderBy = 'name' | 'start_date' | 'end_date' | 'renewal_date' | 'notice_period_days' | 'notice_deadline' | 'status' | 'needs_review'
+  const [order, setOrder] = useState<Order>('asc')
+  const [orderBy, setOrderBy] = useState<OrderBy>('name')
+  // removed needs-review filter chip per request
 
   useEffect(() => {
     loadContracts()
@@ -68,6 +79,10 @@ export default function ContractsPage() {
       renewal_date: contract.renewal_date,
       renewal_term: contract.renewal_term || '',
       notice_period_days: contract.notice_period_days,
+      needs_review: contract.needs_review ?? false,
+      extraction_notes: contract.extraction_notes || '',
+      uncertain_fields: contract.uncertain_fields || [],
+      candidate_dates: contract.candidate_dates || {},
     })
   }
 
@@ -75,14 +90,40 @@ export default function ContractsPage() {
     if (!editingContract) return
 
     try {
-      const updatedContract = await contractsApi.updateContract(editingContract.id, editForm)
+      setSaving(true)
+      const {
+        display_name,
+        vendor_name,
+        start_date,
+        end_date,
+        renewal_date,
+        renewal_term,
+        notice_period_days,
+        // Only persist minimal review flag; exclude candidate_dates/uncertain_fields from update payload
+        needs_review,
+      } = editForm as any
+      const payload: ContractUpdate = {
+        display_name,
+        vendor_name,
+        start_date,
+        end_date,
+        renewal_date,
+        renewal_term,
+        notice_period_days,
+        needs_review,
+      }
+      const updatedContract = await contractsApi.updateContract(editingContract.id, payload)
       setContracts(prev => prev.map(c => 
         c.id === editingContract.id ? updatedContract : c
       ))
       setEditingContract(null)
       setEditForm({})
+      setSnackbar({ open: true, message: 'Contract updated', severity: 'success' })
     } catch (error) {
       console.error('Failed to update contract:', error)
+      setSnackbar({ open: true, message: 'Failed to save changes', severity: 'error' })
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -127,9 +168,106 @@ export default function ContractsPage() {
     }
   }
 
+  const getStatusStyle = (status: string) => {
+    switch (status) {
+      case 'success':
+        return {
+          color: '#9ece6a',
+          bg: 'rgba(158,206,106,0.12)',
+          border: 'rgba(158,206,106,0.25)'
+        }
+      case 'failed':
+        return {
+          color: '#f7768e',
+          bg: 'rgba(247,118,142,0.12)',
+          border: 'rgba(247,118,142,0.25)'
+        }
+      case 'pending':
+        return {
+          color: '#e0af68',
+          bg: 'rgba(224,175,104,0.12)',
+          border: 'rgba(224,175,104,0.25)'
+        }
+      default:
+        return {
+          color: '#9aa4b2',
+          bg: 'rgba(154,164,178,0.12)',
+          border: 'rgba(154,164,178,0.25)'
+        }
+    }
+  }
+
+  const getStatusRank = (c: Contract): number => {
+    // Match the UI: needs review overrides extraction_status
+    if (c.needs_review) return 0
+    switch (c.extraction_status) {
+      case 'failed':
+        return 1
+      case 'pending':
+        return 2
+      case 'success':
+        return 3
+      default:
+        return 4
+    }
+  }
+
   const formatDate = (dateStr: string | null) => {
     return dateStr ? dayjs(dateStr).format('MMM DD, YYYY') : '—'
   }
+
+  const getName = (c: Contract) => (c.display_name || c.file_name || '').toLowerCase()
+
+  const handleRequestSort = (property: OrderBy) => {
+    const isAsc = orderBy === property && order === 'asc'
+    setOrder(isAsc ? 'desc' : 'asc')
+    setOrderBy(property)
+  }
+
+  const sortedContracts = useMemo(() => {
+    const arr = [...contracts]
+    const compare = (a: Contract, b: Contract): number => {
+      const dir = order === 'asc' ? 1 : -1
+      const val = (v: any) => (v === undefined || v === null ? '' : v)
+      switch (orderBy) {
+        case 'name': {
+          const an = getName(a)
+          const bn = getName(b)
+          return an.localeCompare(bn) * dir
+        }
+        case 'start_date':
+        case 'end_date':
+        case 'renewal_date':
+        case 'notice_deadline': {
+          const ad = a[orderBy]
+          const bd = b[orderBy]
+          const at = ad ? dayjs(ad).valueOf() : Number.NEGATIVE_INFINITY
+          const bt = bd ? dayjs(bd).valueOf() : Number.NEGATIVE_INFINITY
+          return (at - bt) * dir
+        }
+        case 'notice_period_days': {
+          const an = a.notice_period_days ?? -Infinity
+          const bn = b.notice_period_days ?? -Infinity
+          return (an - bn) * dir
+        }
+        case 'needs_review': {
+          const an = a.needs_review ? 1 : 0
+          const bn = b.needs_review ? 1 : 0
+          return (an - bn) * dir
+        }
+        case 'status': {
+          const ar = getStatusRank(a)
+          const br = getStatusRank(b)
+          if (ar !== br) return (ar - br) * dir
+          // stable secondary sort by name
+          return getName(a).localeCompare(getName(b)) * dir
+        }
+        default:
+          return 0
+      }
+    }
+    return arr.sort(compare)
+  }, [contracts, order, orderBy])
 
   if (loading) {
     return (
@@ -185,16 +323,18 @@ export default function ContractsPage() {
         <Typography variant="h4" component="h1">
           Contracts
         </Typography>
-        {contracts.length > 0 && (
-          <Button
-            variant="outlined"
-            color="error"
-            startIcon={<ClearIcon />}
-            onClick={() => setClearAllDialogOpen(true)}
-          >
-            Clear All
-          </Button>
-        )}
+        <Stack direction="row" spacing={1} alignItems="center">
+          {contracts.length > 0 && (
+            <Button
+              variant="outlined"
+              color="error"
+              startIcon={<ClearIcon />}
+              onClick={() => setClearAllDialogOpen(true)}
+            >
+              Clear All
+            </Button>
+          )}
+        </Stack>
       </Box>
 
       {contracts.length === 0 ? (
@@ -216,24 +356,80 @@ export default function ContractsPage() {
           </Button>
         </Paper>
       ) : (
-        <TableContainer component={Paper}>
-          <Table>
+        <TableContainer component={Paper} sx={{ borderRadius: 2 }}>
+          <Table size="small">
             <TableHead>
               <TableRow>
-                <TableCell>Name</TableCell>
-                <TableCell>Start Date</TableCell>
-                <TableCell>End Date</TableCell>
-                <TableCell>Renewal Date</TableCell>
-                <TableCell>Notice Period</TableCell>
-                <TableCell>Notice Deadline</TableCell>
-                <TableCell>Status</TableCell>
-                <TableCell>Actions</TableCell>
+                <TableCell sx={{ color: 'text.secondary' }}>
+                  <TableSortLabel
+                    active={orderBy === 'name'}
+                    direction={orderBy === 'name' ? order : 'asc'}
+                    onClick={() => handleRequestSort('name')}
+                  >
+                    Name
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell sx={{ color: 'text.secondary' }}>
+                  <TableSortLabel
+                    active={orderBy === 'start_date'}
+                    direction={orderBy === 'start_date' ? order : 'asc'}
+                    onClick={() => handleRequestSort('start_date')}
+                  >
+                    Start
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell sx={{ color: 'text.secondary' }}>
+                  <TableSortLabel
+                    active={orderBy === 'end_date'}
+                    direction={orderBy === 'end_date' ? order : 'asc'}
+                    onClick={() => handleRequestSort('end_date')}
+                  >
+                    End
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell sx={{ color: 'text.secondary' }}>
+                  <TableSortLabel
+                    active={orderBy === 'renewal_date'}
+                    direction={orderBy === 'renewal_date' ? order : 'asc'}
+                    onClick={() => handleRequestSort('renewal_date')}
+                  >
+                    Renewal
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell sx={{ color: 'text.secondary' }}>
+                  <TableSortLabel
+                    active={orderBy === 'notice_period_days'}
+                    direction={orderBy === 'notice_period_days' ? order : 'asc'}
+                    onClick={() => handleRequestSort('notice_period_days')}
+                  >
+                    Notice
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell sx={{ color: 'text.secondary' }}>
+                  <TableSortLabel
+                    active={orderBy === 'notice_deadline'}
+                    direction={orderBy === 'notice_deadline' ? order : 'asc'}
+                    onClick={() => handleRequestSort('notice_deadline')}
+                  >
+                    Deadline
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell sx={{ color: 'text.secondary' }}>
+                  <TableSortLabel
+                    active={orderBy === 'status'}
+                    direction={orderBy === 'status' ? order : 'asc'}
+                    onClick={() => handleRequestSort('status')}
+                  >
+                    Status
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell sx={{ color: 'text.secondary' }}>Actions</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {contracts.map((contract) => (
-              <TableRow key={contract.id}>
-                <TableCell>
+              {sortedContracts.map((contract) => (
+              <TableRow key={contract.id} sx={{ height: 56 }}>
+                <TableCell sx={{ overflow: 'hidden' }}>
                   <Box>
                     <Typography variant="body2" fontWeight="bold">
                       {contract.display_name || contract.file_name}
@@ -262,29 +458,88 @@ export default function ContractsPage() {
                   </Tooltip>
                 </TableCell>
                 <TableCell>
-                  <Chip
-                    icon={getStatusIcon(contract.extraction_status)}
-                    label={contract.extraction_status}
-                    size="small"
-                    color={contract.extraction_status === 'success' ? 'success' : 
-                           contract.extraction_status === 'failed' ? 'error' : 'default'}
-                  />
+                  {(() => {
+                    // Collapse into one status: "needs review" overrides; otherwise "success|pending|failed"
+                    if (contract.needs_review) {
+                      return (
+                        <Chip label="needs review" size="small" color="warning" variant="outlined" />
+                      )
+                    }
+                    const s = getStatusStyle(contract.extraction_status)
+                    const label = contract.extraction_status
+                    return (
+                      <Chip
+                        icon={getStatusIcon(contract.extraction_status)}
+                        label={label}
+                        size="small"
+                        variant="outlined"
+                        sx={{
+                          color: s.color,
+                          bgcolor: s.bg,
+                          borderColor: s.border,
+                          '& .MuiChip-icon': { color: s.color }
+                        }}
+                      />
+                    )
+                  })()}
                 </TableCell>
                 <TableCell>
-                  <Stack direction="row" spacing={1}>
+                  <Stack direction="row" spacing={1} justifyContent="flex-end">
                     <Tooltip title="View PDF" arrow>
-                      <IconButton onClick={() => setViewingContract(contract)} size="small" color="primary">
-                        <ViewIcon />
+                      <IconButton
+                        onClick={() => setViewingContract(contract)}
+                        size="small"
+                        disableRipple
+                        disableFocusRipple
+                        sx={{
+                          color: 'primary.main',
+                          bgcolor: 'rgba(122,162,247,0.12)',
+                          border: '1px solid',
+                          borderColor: 'rgba(122,162,247,0.25)',
+                          '&:hover': { bgcolor: 'rgba(122,162,247,0.2)' },
+                          width: 32,
+                          height: 32
+                        }}
+                      >
+                        <ViewIcon fontSize="small" />
                       </IconButton>
                     </Tooltip>
                     <Tooltip title="Edit contract details" arrow>
-                      <IconButton onClick={() => handleEditClick(contract)} size="small">
-                        <EditIcon />
+                      <IconButton
+                        onClick={() => handleEditClick(contract)}
+                        size="small"
+                        disableRipple
+                        disableFocusRipple
+                        sx={{
+                          color: '#e0af68',
+                          bgcolor: 'rgba(224,175,104,0.12)',
+                          border: '1px solid',
+                          borderColor: 'rgba(224,175,104,0.25)',
+                          '&:hover': { bgcolor: 'rgba(224,175,104,0.2)' },
+                          width: 32,
+                          height: 32
+                        }}
+                      >
+                        <EditIcon fontSize="small" />
                       </IconButton>
                     </Tooltip>
                     <Tooltip title="Delete contract" arrow>
-                      <IconButton onClick={() => handleDeleteClick(contract)} size="small" color="error">
-                        <DeleteIcon />
+                      <IconButton
+                        onClick={() => handleDeleteClick(contract)}
+                        size="small"
+                        disableRipple
+                        disableFocusRipple
+                        sx={{
+                          color: '#f7768e',
+                          bgcolor: 'rgba(247,118,142,0.12)',
+                          border: '1px solid',
+                          borderColor: 'rgba(247,118,142,0.25)',
+                          '&:hover': { bgcolor: 'rgba(247,118,142,0.2)' },
+                          width: 32,
+                          height: 32
+                        }}
+                      >
+                        <DeleteIcon fontSize="small" />
                       </IconButton>
                     </Tooltip>
                   </Stack>
@@ -297,7 +552,22 @@ export default function ContractsPage() {
       )}
 
       <Dialog open={!!editingContract} onClose={() => setEditingContract(null)} maxWidth="md" fullWidth>
-        <DialogTitle>Edit Contract</DialogTitle>
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          Edit Contract
+          {editingContract && (
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={() => {
+                const base = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:8000'
+                const url = `${base}/contracts/${editingContract.id}/pdf?download=false`
+                window.open(url, '_blank')
+              }}
+            >
+              Open PDF
+            </Button>
+          )}
+        </DialogTitle>
         <DialogContent>
           <Grid container spacing={2} sx={{ mt: 1 }}>
             <Grid item xs={6}>
@@ -372,13 +642,79 @@ export default function ContractsPage() {
                 helperText="Description of renewal terms"
               />
             </Grid>
+            {/* Review & Uncertainty */}
+            <Grid item xs={12}>
+              <Paper variant="outlined" sx={{ p: 2 }}>
+                <Typography variant="subtitle2" gutterBottom>Review & Uncertainty</Typography>
+                {editingContract?.extraction_notes && (
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                    Note: {editingContract.extraction_notes}
+                  </Typography>
+                )}
+                <Grid container spacing={2}>
+                  {(['start_date','end_date','renewal_date'] as const).map((field) => (
+                    <Grid item xs={12} md={4} key={field}>
+                      <Typography variant="caption" color="text.secondary">
+                        {field.replace('_',' ')} candidates
+                      </Typography>
+                      <Stack spacing={1} sx={{ mt: 0.5 }}>
+                        {(editingContract?.candidate_dates?.[field] || []).map((iso) => (
+                          <Button
+                            key={iso}
+                            size="small"
+                            variant={(editForm as any)[field] === iso ? 'contained' : 'outlined'}
+                            onClick={() => setEditForm(prev => ({ ...prev, [field]: iso }))}
+                          >
+                            {dayjs(iso).format('MMM DD, YYYY')}
+                          </Button>
+                        ))}
+                        {(editingContract?.candidate_dates?.[field]?.length ?? 0) === 0 && (
+                          <Typography variant="caption" color="text.secondary">No candidates</Typography>
+                        )}
+                      </Stack>
+                    </Grid>
+                  ))}
+                </Grid>
+                <Stack direction="row" spacing={2} sx={{ mt: 2 }}>
+                  {(editForm as any).needs_review ? (
+                    <Button
+                      variant="outlined"
+                      color="success"
+                      size="small"
+                      onClick={() => setEditForm(prev => ({ ...prev, needs_review: false }))}
+                    >
+                      Mark review completed
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="outlined"
+                      color="warning"
+                      size="small"
+                      onClick={() => setEditForm(prev => ({ ...prev, needs_review: true }))}
+                    >
+                      Mark as needs review
+                    </Button>
+                  )}
+                </Stack>
+              </Paper>
+            </Grid>
           </Grid>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setEditingContract(null)}>Cancel</Button>
-          <Button onClick={handleSave} variant="contained">Save</Button>
+          <Button onClick={handleSave} variant="contained" disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>
         </DialogActions>
       </Dialog>
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={2500}
+        onClose={() => setSnackbar(prev => ({ ...prev, open: false }))}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert onClose={() => setSnackbar(prev => ({ ...prev, open: false }))} severity={snackbar.severity} sx={{ width: '100%' }}>
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)}>
