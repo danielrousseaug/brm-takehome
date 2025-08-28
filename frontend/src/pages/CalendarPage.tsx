@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { Box, Typography, Paper, ToggleButton, ToggleButtonGroup, Popover, Button, Stack, CircularProgress, Skeleton, Tooltip, Chip, Grid, Card, CardContent, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Tabs, Tab, Snackbar, Alert, IconButton } from '@mui/material'
-import { Download as DownloadIcon, Event as EventIcon, Upload as UploadIcon, ViewDay, ViewWeek, ViewList, CalendarToday, CalendarViewMonth, Email as EmailIcon, Close as CloseIcon, OpenInNew as OpenInNewIcon } from '@mui/icons-material'
+import { Download as DownloadIcon, Event as EventIcon, Upload as UploadIcon, ViewDay, CalendarToday, CalendarViewMonth, Email as EmailIcon, Close as CloseIcon, OpenInNew as OpenInNewIcon } from '@mui/icons-material'
 import FullCalendar from '@fullcalendar/react'
 import dayGridPlugin from '@fullcalendar/daygrid'
 import listPlugin from '@fullcalendar/list'
@@ -271,16 +271,6 @@ export default function CalendarPage() {
                   <CalendarViewMonth />
                 </Tooltip>
               </ToggleButton>
-              <ToggleButton value="listWeek">
-                <Tooltip title="Week List" arrow>
-                  <ViewWeek />
-                </Tooltip>
-              </ToggleButton>
-              <ToggleButton value="listMonth">
-                <Tooltip title="Month List" arrow>
-                  <ViewList />
-                </Tooltip>
-              </ToggleButton>
               <ToggleButton value="listYear">
                 <Tooltip title="Year List" arrow>
                   <ViewDay />
@@ -393,13 +383,6 @@ export default function CalendarPage() {
           moreLinkClick="popover"
           eventDisplay="block"
           displayEventTime={false}
-          listDayFormat={{ 
-            weekday: 'long',
-            month: 'long',
-            day: 'numeric',
-            year: 'numeric'
-          }}
-          listDaySideFormat={false}
           noEventsText="No events to display for the selected timeframe"
         />
       </Paper>
