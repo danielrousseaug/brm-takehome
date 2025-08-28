@@ -2,6 +2,47 @@
 
 A full‑stack application that ingests Purchase Agreement PDFs, extracts key terms (vendor, dates, notice period, renewal terms), and presents them in a Contracts table and a Calendar with ICS export/email. Includes OCR fallback for scanned PDFs and a dual PDF preview (original + OCR/highlight).
 
+## Quick Start (Build & Run)
+
+Docker (recommended):
+```
+# 1) Create .env with your OpenRouter key and optional SMTP
+OPENROUTER_API_KEY=your_openrouter_key
+# SMTP_HOST=localhost
+# SMTP_PORT=25
+# SMTP_USER=
+# SMTP_PASS=
+# SMTP_TLS=false
+# SMTP_FROM=no-reply@example.com
+
+# 2) Build and start
+docker compose up --build
+```
+- Frontend: `http://localhost:5173`
+- Backend: `http://localhost:8000` (OpenAPI at `/docs`)
+
+Local dev (without Docker):
+```
+# Backend
+cd backend
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+export OPENROUTER_API_KEY=your_key_here
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+# (Optional) install Tesseract for OCR outside Docker
+# macOS:  brew install tesseract
+# Debian: sudo apt-get install tesseract-ocr
+# Windows: install Tesseract or use WSL
+
+# Frontend
+cd ../frontend
+npm install
+npm run dev
+```
+
+---
+
 ## Table of Contents
 - Overview
 - Features
@@ -44,6 +85,7 @@ A full‑stack application that ingests Purchase Agreement PDFs, extracts key te
 - ICS export and ICS email with optional reminders
 - PDF preview (original) and OCR/text‑only view with soft highlights
 - Best‑effort removal of uploaded files on delete/clear
+- Contract error handling with review system (mark as needs review, show candidate dates, edit and resolve)
 
 ## Tech Stack
 - Backend: FastAPI, SQLAlchemy, Pydantic v2, Uvicorn
@@ -228,9 +270,11 @@ The script checks API health, performs a sample upload (expects `SampleAgreement
 - Email errors: verify SMTP host/port/TLS/auth.
 
 ## Roadmap / Next Steps
-- Background jobs for large batch uploads
-- Authentication & users
+- Postgres + Alembic migrations
+- Background jobs (Celery/Redis) for large batch uploads
+- Authentication & multi‑tenant isolation
 - Notification scheduling (email/Slack) ahead of deadlines
+- Enhanced validation and review workflows
 - Upload size limits & content scanning
 
 ---
