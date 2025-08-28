@@ -154,7 +154,7 @@ export default function ContractsPage() {
     }
   }
 
-  const getStatusIcon = (status: string) => {
+  const getStatusIcon = (status: string): JSX.Element | undefined => {
     switch (status) {
       case 'success':
         return <CheckCircle color="success" />
@@ -163,7 +163,7 @@ export default function ContractsPage() {
       case 'pending':
         return <Pending color="warning" />
       default:
-        return null
+        return undefined
     }
   }
 
