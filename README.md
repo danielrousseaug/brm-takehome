@@ -228,11 +228,9 @@ The script checks API health, performs a sample upload (expects `SampleAgreement
 - Email errors: verify SMTP host/port/TLS/auth.
 
 ## Roadmap / Next Steps
-- Postgres + Alembic migrations
-- Background jobs (Celery/Redis) for large batch uploads
-- Authentication & multi‑tenant isolation
+- Background jobs for large batch uploads
+- Authentication & users
 - Notification scheduling (email/Slack) ahead of deadlines
-- Enhanced validation and review workflows
 - Upload size limits & content scanning
 
 ---
