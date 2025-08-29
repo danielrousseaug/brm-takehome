@@ -1,6 +1,6 @@
 # BRM Renewal Calendar
 
-A full‑stack application that ingests Purchase Agreement PDFs, extracts key terms (vendor, dates, notice period, renewal terms), and presents them in a Contracts table and a Calendar with ICS export/email. Includes OCR fallback for scanned PDFs and a dual PDF preview (original + OCR/highlight).
+A full‑stack application that ingests Purchase Agreement PDFs, extracts key terms, and presents them in a Contracts table and a Calendar w/ ICS export/email. Includes OCR fallback for scanned PDFs and a PDF preview (original + OCR/highlight).
 
 ## Quick Start (Build & Run)
 
@@ -21,7 +21,7 @@ docker compose up --build
 - Frontend: `http://localhost:5173`
 - Backend: `http://localhost:8000` (OpenAPI at `/docs`)
 
-Local dev (without Docker):
+Without Docker:
 ```
 # Backend
 cd backend
@@ -58,14 +58,7 @@ npm run dev
   - Extraction pipeline (PDF → OCR → AI → Normalize)
 - Database & Models
 - API Reference
-- Frontend UX
-- PDF Preview & Highlighting
-- Calendar & ICS Export
-- Emailing ICS (SMTP)
 - File Storage & Cleanup
-- Testing & Diagnostics
-- Troubleshooting
-- Roadmap / Next Steps
 
 ---
 
@@ -77,7 +70,7 @@ npm run dev
 - Preview both the original PDF and a text/OCR overlay with highlights
 
 ## Features
-- Concurrent PDF processing per file
+- Concurrent asyncronous PDF processing per file
 - PyMuPDF text extraction with Tesseract OCR fallback for image-only scans
 - AI extraction via OpenRouter (GPT‑4); server-side validation/normalization
 - Contracts CRUD + bulk clear
@@ -120,7 +113,7 @@ brm-takehome/
 ```
 
 ## Setup & Running
-### Docker (recommended)
+### Docker (best way)
 Create `.env` in the repo root:
 ```
 OPENROUTER_API_KEY=your_openrouter_key
@@ -148,7 +141,7 @@ pip install -r requirements.txt
 export OPENROUTER_API_KEY=your_key_here
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
-Install Tesseract if you want OCR locally:
+Tesseract needed if you want OCR locally:
 - macOS (brew): `brew install tesseract`
 - Ubuntu/Debian: `sudo apt-get install tesseract-ocr`
 - Windows: use WSL or install a Tesseract build and ensure it’s on PATH
@@ -170,7 +163,7 @@ Frontend:
 
 ## Architecture & Data Flow
 ```
-Upload PDFs → Save file (uploads/) → Extract text (PyMuPDF)
+Upload PDFs → Save file  → Extract text (PyMuPDF)
   ↳ If low/empty text → OCR page images with Tesseract
 → AI extraction (OpenRouter/GPT‑4) → Validate/normalize (dates, ints)
 → Persist Contract (SQLite) → Compute notice_deadline
@@ -198,8 +191,6 @@ Upload PDFs → Save file (uploads/) → Extract text (PyMuPDF)
 
 `compute_notice_deadline()` sets `notice_deadline = renewal_date − notice_period_days` when both exist.
 
-## API Reference
-Base URL `http://localhost:8000`
 
 ### Contracts
 - `POST /contracts` — upload one or more PDFs (multipart field name: `files`).
@@ -226,57 +217,10 @@ All errors are shaped as:
 { "error": { "code": "validation_error|not_found|internal|http_error", "message": "..." } }
 ```
 
-## Frontend UX
-- **Upload**: drag‑and‑drop, shows per-file progress state; after processing, quick links to Contracts/Calendar.
-- **Contracts**: sortable columns; edit dialog for fields; delete one or clear all; actions have fixed sizes to prevent layout shift.
-- **Calendar**: Month/List views with filter cards; Export dialog supports ICS download or email with optional reminder days.
-- **PDF Viewer**: dialog with original PDF and OCR/text overlay (see below).
-
-## PDF Preview & Highlighting
-- Two stacked sections:
-  1) OCR/Text‑only view with soft background highlights for fields (vendor/date/term/notice). If the PDF has no embedded text layer, we still show OCR text fallback.
-  2) Original PDF (no overlay) for pixel‑accurate viewing.
-- Date highlights attempt common formats (ISO, “MMM D, YYYY”, “MM/DD/YYYY”, etc.) so the overlay can match typical date renderings.
-- Highlight chip colors match overlay colors; only found types are shown.
 
 ## Calendar & ICS Export
 - Events are all‑day; `notice_deadline` is prioritized.
 - ICS includes optional `VALARM` that triggers `reminder_days` before an event (converted to minutes).
 
-## Emailing ICS (SMTP)
-- Configure SMTP via environment variables. If `SMTP_TLS=true`, a STARTTLS session is used. If `SMTP_USER`/`SMTP_PASS` are set, the server logs in before sending.
-- Sender defaults to `no-reply@example.com` unless `SMTP_FROM` is provided.
-
 ## File Storage & Cleanup
 - Uploaded PDFs are stored under `uploads/{uuid}_{originalName}`.
-- Deleting a single contract removes its file best‑effort.
-- Bulk clear removes all contract files and then purges any remaining files in `uploads/` to avoid orphans.
-
-## Testing & Diagnostics
-- Explore the API: `http://localhost:8000/docs`
-- Quick smoke test:
-```
-python test_app.py
-```
-The script checks API health, performs a sample upload (expects `SampleAgreements/BRM_OrderForm_Anthropic.pdf`), lists contracts, and fetches calendar events.
-
-## Troubleshooting
-- OpenRouter errors: set `OPENROUTER_API_KEY`, ensure egress is allowed; default model is `openai/gpt-4`.
-- No highlights in preview: for dates, multiple formats are attempted; if vendor/term not matching, edit values and reopen.
-- OCR missing: ensure Tesseract is installed for local runs (Docker image already has it). Low‑quality scans may still be unreliable.
-- CORS/access issues: `VITE_API_BASE_URL` must point to backend; backend CORS allows `http://localhost:5173`.
-- Ports busy: adjust ports in `docker-compose.yml`.
-- SQLite locked: if running multiple backend processes, move to Postgres.
-- Email errors: verify SMTP host/port/TLS/auth.
-
-## Roadmap / Next Steps
-- Postgres + Alembic migrations
-- Background jobs (Celery/Redis) for large batch uploads
-- Authentication & multi‑tenant isolation
-- Notification scheduling (email/Slack) ahead of deadlines
-- Enhanced validation and review workflows
-- Upload size limits & content scanning
-
----
-
-Made with FastAPI, React, and a pragmatic focus on clear UX and dependable extraction.
